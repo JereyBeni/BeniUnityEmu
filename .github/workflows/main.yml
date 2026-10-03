@@ -1,1 +1,59 @@
+name: Build BeniUnityEmu
 
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  PROJECT_NAME: BeniUnityEmu
+
+jobs:
+  build-windows:
+    name: Build Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release
+        run: cargo build --release
+        shell: bash
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p package/BeniAPK_Apps package/BeniIOS_Apps package/cache
+          cp target/release/BeniUnityEmu.exe package/ 2>/dev/null || cp target/release/BeniUnityEmu package/BeniUnityEmu.exe
+          echo 'BeniUnityEmu - Made by Beni' > package/LEEME.txt
+          cd package && 7z a -tzip ../BeniUnityEmu-windows-x64.zip *
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BeniUnityEmu-windows-x64
+          path: BeniUnityEmu-windows-x64.zip
+          retention-days: 30
+
+  build-linux:
+    name: Build Linux (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: Package
+        run: |
+          mkdir -p package/BeniAPK_Apps package/BeniIOS_Apps package/cache
+          cp target/release/BeniUnityEmu package/
+          chmod +x package/BeniUnityEmu
+          echo 'BeniUnityEmu - Made by Beni' > package/LEEME.txt
+          cd package && zip -r ../BeniUnityEmu-linux-x64.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BeniUnityEmu-linux-x64
+          path: BeniUnityEmu-linux-x64.zip
+          retention-days: 30
