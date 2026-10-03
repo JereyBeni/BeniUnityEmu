@@ -1,0 +1,13 @@
+[package]
+name = "BeniUnityEmu"
+version = "0.1.0"
+edition = "2021"
+authors = ["Beni"]
+description = "Experimental Unity emulation runtime for old Android/iOS Unity games on Windows"
+license = "MIT"
+
+[dependencies]
+
+[[bin]]
+name = "BeniUnityEmu"
+path = "src/main.rs"
