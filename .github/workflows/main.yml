@@ -9,7 +9,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  PROJECT_NAME: BeniUnityEmu
 
 jobs:
   build-windows:
@@ -21,16 +20,36 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
-      - name: Build release
-        run: cargo build --release
+      - name: Build release (CLI + App Picker)
+        run: cargo build --release --bins
         shell: bash
       - name: Package
         shell: bash
         run: |
-          mkdir -p package/BeniAPK_Apps package/BeniIOS_Apps package/cache
-          cp target/release/BeniUnityEmu.exe package/ 2>/dev/null || cp target/release/BeniUnityEmu package/BeniUnityEmu.exe
-          echo 'BeniUnityEmu - Made by Beni' > package/LEEME.txt
-          cd package && 7z a -tzip ../BeniUnityEmu-windows-x64.zip *
+          mkdir -p package/BeniApps package/BeniFonts package/BeniSO package/BeniDyLIB package/cache
+          mkdir -p package/BeniAPK_Apps package/BeniIOS_Apps
+          cp target/release/BeniUnityEmu.exe package/ 2>/dev/null || true
+          cp target/release/BeniAppPicker.exe package/ 2>/dev/null || true
+          if [ ! -f package/BeniUnityEmu.exe ] && [ -f target/release/BeniUnityEmu ]; then
+            cp target/release/BeniUnityEmu package/BeniUnityEmu.exe
+          fi
+          if [ ! -f package/BeniAppPicker.exe ] && [ -f target/release/BeniAppPicker ]; then
+            cp target/release/BeniAppPicker package/BeniAppPicker.exe
+          fi
+          cat > package/LEEME.txt << 'TXT'
+          BeniUnityEmu + Beni App Picker
+          Made by Beni
+
+          BeniAppPicker.exe  – GUI launcher
+          BeniUnityEmu.exe   – CLI runtime
+
+          1. Put APK/IPA files in BeniApps/
+          2. Run BeniAppPicker.exe
+          3. Select an app → Launch / Inspect / Extract
+          TXT
+          if [ -f README.md ]; then cp README.md package/; fi
+          cd package
+          7z a -tzip "../BeniUnityEmu-windows-x64.zip" *
       - uses: actions/upload-artifact@v4
         with:
           name: BeniUnityEmu-windows-x64
@@ -44,13 +63,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
+      - name: Install GUI deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+      - run: cargo build --release --bins
       - name: Package
         run: |
-          mkdir -p package/BeniAPK_Apps package/BeniIOS_Apps package/cache
+          mkdir -p package/BeniApps package/BeniFonts package/BeniSO package/BeniDyLIB package/cache
           cp target/release/BeniUnityEmu package/
-          chmod +x package/BeniUnityEmu
-          echo 'BeniUnityEmu - Made by Beni' > package/LEEME.txt
+          cp target/release/BeniAppPicker package/
+          chmod +x package/BeniUnityEmu package/BeniAppPicker
+          echo 'BeniUnityEmu + Beni App Picker' > package/LEEME.txt
           cd package && zip -r ../BeniUnityEmu-linux-x64.zip .
       - uses: actions/upload-artifact@v4
         with:

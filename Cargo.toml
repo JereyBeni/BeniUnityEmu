@@ -1,13 +1,28 @@
 [package]
-name = "BeniUnityEmu"
-version = "0.1.0"
+name = "beni_unity_emu"
+version = "0.2.0"
 edition = "2021"
 authors = ["Beni"]
-description = "Experimental Unity emulation runtime for old Android/iOS Unity games on Windows"
+description = "Experimental Unity emulation runtime + Beni App Picker launcher"
 license = "MIT"
 
 [dependencies]
+eframe = { version = "0.27", optional = true }
+
+[features]
+default = ["gui"]
+gui = ["eframe"]
 
 [[bin]]
 name = "BeniUnityEmu"
 path = "src/main.rs"
+required-features = []
+
+[[bin]]
+name = "BeniAppPicker"
+path = "src/bin/beni_app_picker.rs"
+required-features = ["gui"]
+
+[lib]
+name = "beni_unity_emu"
+path = "src/lib.rs"
