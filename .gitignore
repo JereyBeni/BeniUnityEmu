@@ -1,0 +1,17 @@
+# Rust build
+/target/
+
+# Packages / native libs (user content, not source)
+*.apk
+*.ipa
+*.so
+*.dylib
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Local cache from runtime
+/cache/
