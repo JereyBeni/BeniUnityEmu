@@ -8,7 +8,6 @@ use zip::ZipArchive;
 use crate::ipa::macho::{inspect_macho_arches, MachOArch};
 use crate::ziputil::{
     extract_file_to, extract_prefix_to, has_entry, list_entries, open_archive, read_entry_bytes,
-    sanitize_entry_name,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -67,7 +66,6 @@ impl IpaLoader {
             if name.starts_with("Payload/") && name.ends_with(".app") {
                 return Some(format!("{}/", name));
             }
-            // Payload/Foo.app/Info.plist
             if name.starts_with("Payload/") && name.ends_with("/Info.plist") {
                 if let Some(prefix) = name.strip_suffix("Info.plist") {
                     return Some(prefix.to_string());
@@ -88,7 +86,11 @@ impl IpaLoader {
 
         for name in &entries {
             let lower = name.to_lowercase();
-            if lower.contains("unity") && (lower.ends_with(".dylib") || lower.ends_with(".framework/") || lower.contains("unityframework")) {
+            if lower.contains("unity")
+                && (lower.ends_with(".dylib")
+                    || lower.ends_with(".framework/")
+                    || lower.contains("unityframework"))
+            {
                 summary.has_unity = true;
             }
             if lower.ends_with(".dylib") || lower.ends_with(".so") {
@@ -96,7 +98,6 @@ impl IpaLoader {
             }
         }
 
-        // Best-effort Info.plist scan as UTF-8 text
         if let Some(ref bundle) = summary.app_bundle {
             let plist_name = format!("{}Info.plist", bundle);
             if let Ok(bytes) = self.with_archive(|a| read_entry_bytes(a, &plist_name)) {
@@ -108,7 +109,6 @@ impl IpaLoader {
                     summary.min_ios = plist_string_value(&text, "MinimumOSVersion");
                 }
             }
-            // Mach-O arch from executable if present
             if let Some(ref exe) = summary.executable {
                 let exe_path = format!("{}{}", bundle, exe);
                 if let Ok(bytes) = self.with_archive(|a| read_entry_bytes(a, &exe_path)) {
@@ -137,7 +137,6 @@ impl IpaLoader {
 }
 
 fn plist_string_value(text: &str, key: &str) -> Option<String> {
-    // XML plist: <key>KEY</key>\n  <string>VALUE</string>
     let key_tag = format!("<key>{}</key>", key);
     let idx = text.find(&key_tag)?;
     let after = &text[idx + key_tag.len()..];
@@ -169,6 +168,7 @@ fn prefer_macho_arch(arches: &[MachOArch]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ziputil::sanitize_entry_name;
     use std::fs::{self, File};
     use std::io::Write;
     use std::path::PathBuf;
@@ -194,7 +194,6 @@ mod tests {
 </dict></plist>"#,
         )
         .unwrap();
-        // Minimal arm64 Mach-O header
         let mut macho = vec![0u8; 32];
         macho[0..4].copy_from_slice(&0xfeed_facfu32.to_le_bytes());
         macho[4..8].copy_from_slice(&0x0100_000cu32.to_le_bytes());
@@ -229,7 +228,6 @@ mod tests {
         let path = make_test_ipa();
         let loader = IpaLoader::open(&path);
         assert!(loader.is_ok());
-        // sanitize rejects ..
         assert!(sanitize_entry_name("../evil").is_none());
     }
 }
