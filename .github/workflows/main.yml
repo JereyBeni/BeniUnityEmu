@@ -1,55 +1,127 @@
-name: Build BeniUnityEmu
+name: BeniUnityEmu CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  check:
+    name: Check & Test (lib)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: check-lib
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: Cargo check (lib, no default features)
+        run: cargo check --lib --no-default-features
+
+      - name: Cargo test (lib, no default features)
+        run: cargo test --lib --no-default-features
+
   build-windows:
     name: Build Windows (x86_64)
+    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+
       - uses: Swatinem/rust-cache@v2
-      - name: Build release (CLI + App Picker)
-        run: cargo build --release --bins
-        shell: bash
-      - name: Package
+        with:
+          key: windows-release
+
+      - name: Build release binaries
         shell: bash
         run: |
-          mkdir -p package/BeniApps package/BeniFonts package/BeniSO package/BeniDyLIB package/cache
-          mkdir -p package/BeniAPK_Apps package/BeniIOS_Apps
-          cp target/release/BeniUnityEmu.exe package/ 2>/dev/null || true
-          cp target/release/BeniAppPicker.exe package/ 2>/dev/null || true
-          if [ ! -f package/BeniUnityEmu.exe ] && [ -f target/release/BeniUnityEmu ]; then
-            cp target/release/BeniUnityEmu package/BeniUnityEmu.exe
+          set -e
+          cargo build --release --bins
+          cargo build --release --no-default-features --features opengl --bin BeniOpenGL || {
+            echo "::warning::BeniOpenGL (opengl feature) failed to build — package will omit it"
+          }
+
+      - name: Package (flat zip — no nested archives)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf package
+          mkdir -p package/BeniApps package/BeniAPK_Apps package/BeniIOS_Apps
+          mkdir -p package/BeniFonts package/cache
+          mkdir -p package/BeniSO package/BeniDyLIB
+
+          for f in BeniUnityEmu BeniAppPicker BeniOpenGL; do
+            if [ -f "target/release/${f}.exe" ]; then
+              cp "target/release/${f}.exe" package/
+            elif [ -f "target/release/${f}" ]; then
+              cp "target/release/${f}" "package/${f}.exe"
+            fi
+          done
+
+          if [ -d BeniSO ]; then
+            cp -r BeniSO/. package/BeniSO/
           fi
-          if [ ! -f package/BeniAppPicker.exe ] && [ -f target/release/BeniAppPicker ]; then
-            cp target/release/BeniAppPicker package/BeniAppPicker.exe
+          if [ -d BeniDyLIB ]; then
+            cp -r BeniDyLIB/. package/BeniDyLIB/
           fi
+
+          [ -f config.yml ] && cp config.yml package/
+          [ -f README.md ] && cp README.md package/
+
           cat > package/LEEME.txt << 'TXT'
           BeniUnityEmu + Beni App Picker
           Made by Beni
 
           BeniAppPicker.exe  – GUI launcher
           BeniUnityEmu.exe   – CLI runtime
+          BeniOpenGL.exe     – OpenGL asset renderer (if present)
+
+          Native runtime libs:
+            BeniSO/    – .so  (keep next to the executables)
+            BeniDyLIB/ – .dylib
 
           1. Put APK/IPA files in BeniApps/
           2. Run BeniAppPicker.exe
-          3. Select an app → Launch / Inspect / Extract
+          3. Select an app → Inspect / Extract / Launch
+
+          Packaging rule: single flat zip only (no zip inside zip).
           TXT
-          if [ -f README.md ]; then cp README.md package/; fi
-          cd package
-          7z a -tzip "../BeniUnityEmu-windows-x64.zip" *
+
+          rm -f BeniUnityEmu-windows-x64.zip
+          (
+            cd package
+            7z a -tzip "../BeniUnityEmu-windows-x64.zip" .
+          )
+
+          if 7z l -ba BeniUnityEmu-windows-x64.zip | grep -E 'Path = .*\.(zip|jar|apk|ipa)$' ; then
+            echo "ERROR: nested archive detected inside package — forbidden"
+            exit 1
+          fi
+
+          echo "Package OK"
+          7z l BeniUnityEmu-windows-x64.zip | tail -n 30
+
       - uses: actions/upload-artifact@v4
         with:
           name: BeniUnityEmu-windows-x64
@@ -58,24 +130,74 @@ jobs:
 
   build-linux:
     name: Build Linux (x86_64)
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
       - uses: Swatinem/rust-cache@v2
-      - name: Install GUI deps
+        with:
+          key: linux-release
+
+      - name: Install GUI / window system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
-      - run: cargo build --release --bins
-      - name: Package
+          sudo apt-get install -y \
+            libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev libssl-dev \
+            libwayland-dev libx11-dev zip
+
+      - name: Build release binaries
         run: |
-          mkdir -p package/BeniApps package/BeniFonts package/BeniSO package/BeniDyLIB package/cache
-          cp target/release/BeniUnityEmu package/
-          cp target/release/BeniAppPicker package/
-          chmod +x package/BeniUnityEmu package/BeniAppPicker
-          echo 'BeniUnityEmu + Beni App Picker' > package/LEEME.txt
-          cd package && zip -r ../BeniUnityEmu-linux-x64.zip .
+          set -e
+          cargo build --release --bins
+          cargo build --release --no-default-features --features opengl --bin BeniOpenGL || {
+            echo "::warning::BeniOpenGL (opengl feature) failed to build — package will omit it"
+          }
+
+      - name: Package (flat zip — no nested archives)
+        run: |
+          set -euo pipefail
+
+          rm -rf package
+          mkdir -p package/BeniApps package/BeniAPK_Apps package/BeniIOS_Apps
+          mkdir -p package/BeniFonts package/cache
+          mkdir -p package/BeniSO package/BeniDyLIB
+
+          for f in BeniUnityEmu BeniAppPicker BeniOpenGL; do
+            if [ -f "target/release/${f}" ]; then
+              cp "target/release/${f}" package/
+              chmod +x "package/${f}"
+            fi
+          done
+
+          if [ -d BeniSO ]; then cp -r BeniSO/. package/BeniSO/; fi
+          if [ -d BeniDyLIB ]; then cp -r BeniDyLIB/. package/BeniDyLIB/; fi
+          [ -f config.yml ] && cp config.yml package/
+          [ -f README.md ] && cp README.md package/
+
+          cat > package/LEEME.txt << 'TXT'
+          BeniUnityEmu + Beni App Picker (Linux)
+          Made by Beni
+
+          Native runtime libs live in BeniSO/ and BeniDyLIB/.
+          Single flat zip only — do not nest archives.
+          TXT
+
+          rm -f BeniUnityEmu-linux-x64.zip
+          ( cd package && zip -r ../BeniUnityEmu-linux-x64.zip . )
+
+          if unzip -l BeniUnityEmu-linux-x64.zip | grep -Ei '\.(zip|jar|apk|ipa)$'; then
+            echo "ERROR: nested archive detected inside package — forbidden"
+            exit 1
+          fi
+
+          echo "Package OK"
+          unzip -l BeniUnityEmu-linux-x64.zip | tail -n 40
+
       - uses: actions/upload-artifact@v4
         with:
           name: BeniUnityEmu-linux-x64
