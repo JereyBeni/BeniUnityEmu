@@ -100,7 +100,8 @@ impl IpaLoader {
 
         if let Some(ref bundle) = summary.app_bundle {
             let plist_name = format!("{}Info.plist", bundle);
-            if let Ok(bytes) = self.with_archive(|a| read_entry_bytes(a, &plist_name)) {
+            // with_archive(Ok(Result)) → flatten with and_then
+            if let Ok(Ok(bytes)) = self.with_archive(|a| read_entry_bytes(a, &plist_name)) {
                 if let Ok(text) = String::from_utf8(bytes) {
                     summary.bundle_id = plist_string_value(&text, "CFBundleIdentifier");
                     summary.bundle_version = plist_string_value(&text, "CFBundleShortVersionString")
@@ -111,7 +112,7 @@ impl IpaLoader {
             }
             if let Some(ref exe) = summary.executable {
                 let exe_path = format!("{}{}", bundle, exe);
-                if let Ok(bytes) = self.with_archive(|a| read_entry_bytes(a, &exe_path)) {
+                if let Ok(Ok(bytes)) = self.with_archive(|a| read_entry_bytes(a, &exe_path)) {
                     if let Ok(arches) = inspect_macho_arches(&bytes) {
                         summary.preferred_arch = prefer_macho_arch(&arches);
                     }

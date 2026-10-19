@@ -64,16 +64,19 @@ pub fn extract_file_to<R: Read + io::Seek>(
     let mut entry = archive
         .by_name(entry_name)
         .map_err(|e| format!("Entry not found {}: {}", entry_name, e))?;
-    if entry.encrypted() {
-        return Err(format!("Entry is encrypted: {}", entry_name));
-    }
+    // zip 0.6: no ZipFile::encrypted(); treat IO failure as unreadable/encrypted.
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Cannot create parent {:?}: {}", parent, e))?;
     }
     let mut out =
         File::create(dest).map_err(|e| format!("Cannot create {:?}: {}", dest, e))?;
-    io::copy(&mut entry, &mut out).map_err(|e| format!("Copy failed for {}: {}", entry_name, e))?;
+    io::copy(&mut entry, &mut out).map_err(|e| {
+        format!(
+            "Copy failed for {} (unsupported/encrypted/corrupt?): {}",
+            entry_name, e
+        )
+    })?;
     Ok(())
 }
 
