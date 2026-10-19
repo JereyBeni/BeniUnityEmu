@@ -19,6 +19,12 @@ pub struct IpaSummary {
     pub executable: Option<String>,
     pub min_ios: Option<String>,
     pub has_unity: bool,
+    /// Heuristic: path contains TouchScript
+    pub has_touchscript: bool,
+    /// Heuristic: il2cpp / global-metadata
+    pub has_il2cpp: bool,
+    /// Heuristic: Assembly-CSharp / Managed folder (Mono-style)
+    pub has_mono_assemblies: bool,
     pub native_libs: Vec<String>,
     pub entries: Vec<String>,
     pub app_bundle: Option<String>,
@@ -89,9 +95,28 @@ impl IpaLoader {
             if lower.contains("unity")
                 && (lower.ends_with(".dylib")
                     || lower.ends_with(".framework/")
-                    || lower.contains("unityframework"))
+                    || lower.contains("unityframework")
+                    || lower.contains("data/raw")
+                    || lower.contains("data.unity3d")
+                    || lower.contains("globalgamemanagers"))
             {
                 summary.has_unity = true;
+            }
+            if lower.contains("touchscript") {
+                summary.has_touchscript = true;
+                summary.has_unity = true;
+            }
+            if lower.contains("il2cpp")
+                || lower.contains("global-metadata.dat")
+                || lower.contains("libil2cpp")
+            {
+                summary.has_il2cpp = true;
+            }
+            if lower.contains("assembly-csharp")
+                || lower.ends_with(".dll")
+                    && (lower.contains("/managed/") || lower.contains("data/managed"))
+            {
+                summary.has_mono_assemblies = true;
             }
             if lower.ends_with(".dylib") || lower.ends_with(".so") {
                 summary.native_libs.push(name.clone());
@@ -130,6 +155,10 @@ impl IpaLoader {
         println!("  files:  {}", summary.file_count);
         println!("  bundle: {:?}", summary.app_bundle);
         println!("  arch:   {:?}", summary.preferred_arch);
+        println!("  unity:  {}", summary.has_unity);
+        println!("  touchscript: {}", summary.has_touchscript);
+        println!("  il2cpp: {}", summary.has_il2cpp);
+        println!("  mono assemblies: {}", summary.has_mono_assemblies);
         for e in summary.entries.iter().take(40) {
             println!("    {}", e);
         }
@@ -207,6 +236,12 @@ mod tests {
         macho[4..8].copy_from_slice(&0x0100_000cu32.to_le_bytes());
         zip.start_file("Payload/TestApp.app/TestApp", opts).unwrap();
         zip.write_all(&macho).unwrap();
+        zip.start_file(
+            "Payload/TestApp.app/Data/Managed/TouchScript.dll",
+            opts,
+        )
+        .unwrap();
+        zip.write_all(b"MZ-fake").unwrap();
         zip.finish().unwrap();
         path
     }
@@ -229,6 +264,8 @@ mod tests {
         assert_eq!(s.executable.as_deref(), Some("TestApp"));
         assert_eq!(s.min_ios.as_deref(), Some("9.0"));
         assert_eq!(s.preferred_arch.as_deref(), Some("arm64"));
+        assert!(s.has_touchscript);
+        assert!(s.has_mono_assemblies);
     }
 
     #[test]
