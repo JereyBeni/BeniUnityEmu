@@ -2,7 +2,7 @@ name: BeniUnityEmu CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, DebugForIPAandAPK]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -101,7 +101,7 @@ jobs:
             BeniSO/    – .so  (keep next to the executables)
             BeniDyLIB/ – .dylib
 
-          1. Put APK/IPA files in BeniApps/
+          1. Put APK/IPA files OR extracted Unity folders in BeniApps/
           2. Run BeniAppPicker.exe
           3. Select an app → Inspect / Extract / Launch
 
