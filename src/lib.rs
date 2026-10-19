@@ -80,7 +80,8 @@ impl AppInfo {
                     "Ready"
                 }
             }
-            AppFormat::Ipa => "Ready",
+            // IPA is inspectable; native guest execution is not available yet.
+            AppFormat::Ipa => "Inspectable",
             AppFormat::Unknown => "Error",
         }
     }
@@ -193,6 +194,8 @@ pub fn enrich_app_info(info: &mut AppInfo) {
                 let summary = loader.summarize();
                 info.native_libs = summary.native_libs;
                 info.architecture = summary.preferred_arch;
+                info.package = summary.bundle_id;
+                info.version = summary.bundle_version;
             }
             Err(e) => eprintln!("[ERROR] Failed to open IPA: {}", e),
         },
@@ -261,6 +264,15 @@ pub fn inspect_app(app: &AppInfo) -> String {
                     "  Architecture: {}\n",
                     summary.preferred_arch.as_deref().unwrap_or("arm64")
                 ));
+                if let Some(ref b) = summary.bundle_id {
+                    out.push_str(&format!("  Bundle ID: {}\n", b));
+                }
+                if let Some(ref e) = summary.executable {
+                    out.push_str(&format!("  Executable: {}\n", e));
+                }
+                out.push_str(
+                    "  Note: Inspect only — Launch will report UnsupportedRuntime until a native iOS guest backend exists.\n",
+                );
                 loader.print_structure();
             }
             Err(e) => out.push_str(&format!("[ERROR] {}\n", e)),
@@ -270,6 +282,8 @@ pub fn inspect_app(app: &AppInfo) -> String {
     out
 }
 
+/// Launch pipeline entry point used by App Picker / CLI.
+/// Returns the full stage log. Does not claim guest execution on UnsupportedRuntime.
 pub fn run_app(app: &AppInfo) -> Result<String, String> {
     let app_name = app
         .name
@@ -281,14 +295,24 @@ pub fn run_app(app: &AppInfo) -> Result<String, String> {
         AppFormat::Unknown => return Err("Unknown format".into()),
     };
 
+    // Best-effort cache extract (non-fatal for launch diagnostics)
     let cache_mgr = CacheManager::new("cache");
     if !cache_mgr.has_valid_cache(app_name) {
         let _ = extract_app(app);
     }
 
     let mut session = GameSession::new(app_name, &app.path, platform);
-    session.run()?;
-    Ok(session.last_message)
+    match session.run() {
+        Ok(()) => Ok(session.log),
+        Err(e) => {
+            // Still return accumulated log so the UI shows Extract/Inspect stages
+            if session.log.is_empty() {
+                Err(e)
+            } else {
+                Ok(format!("{}\n{}", session.log.trim_end(), e))
+            }
+        }
+    }
 }
 
 pub fn path_exists(p: &str) -> bool {
