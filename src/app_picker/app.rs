@@ -60,7 +60,7 @@ impl AppPickerState {
             return;
         };
         self.status_log
-            .push_str(&format!("[Launch] Starting {}\u2026\n", app.name));
+            .push_str(&format!("[Launch] Starting {}\u{2026}\n", app.name));
         match run_app(&app) {
             Ok(msg) => self.status_log.push_str(&format!("[Launch] {}\n", msg)),
             Err(e) => self.status_log.push_str(&format!("[Launch] Error: {}\n", e)),
@@ -85,7 +85,7 @@ impl AppPickerState {
             return;
         };
         self.status_log
-            .push_str(&format!("[Extract] {}\u2026\n", app.name));
+            .push_str(&format!("[Extract] {}\u{2026}\n", app.name));
         match extract_app(&app) {
             Ok(msg) => self.status_log.push_str(&format!("{}\n", msg)),
             Err(e) => self.status_log.push_str(&format!("[Extract] Error: {}\n", e)),
