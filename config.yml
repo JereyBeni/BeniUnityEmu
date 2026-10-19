@@ -1,0 +1,35 @@
+# BeniUnityEmu configuration
+# graphics section used by BeniOpenGL (Stage C1). Does NOT run Unity games.
+
+app_picker:
+  view: list
+  sort_by: name
+  sort_ascending: true
+  show_icons: true
+  remember_selection: false
+  filter: all
+
+library:
+  directories:
+    - BeniApps
+    - BeniAPK_Apps
+    - BeniIOS_Apps
+  recursive_scan: false
+
+logging:
+  level: info
+
+cache:
+  enabled: true
+  directory: cache
+
+graphics:
+  backend: opengl
+  window:
+    title: "BeniUnityEmu - OpenGL Runtime [PARTIAL]"
+    width: 1280
+    height: 720
+    resizable: true
+  diagnostics:
+    show_renderer_info: true
+    show_fps: true
