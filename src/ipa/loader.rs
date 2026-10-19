@@ -100,7 +100,6 @@ impl IpaLoader {
 
         if let Some(ref bundle) = summary.app_bundle {
             let plist_name = format!("{}Info.plist", bundle);
-            // with_archive(Ok(Result)) → flatten with and_then
             if let Ok(Ok(bytes)) = self.with_archive(|a| read_entry_bytes(a, &plist_name)) {
                 if let Ok(text) = String::from_utf8(bytes) {
                     summary.bundle_id = plist_string_value(&text, "CFBundleIdentifier");
@@ -173,11 +172,20 @@ mod tests {
     use std::fs::{self, File};
     use std::io::Write;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use zip::write::FileOptions;
     use zip::ZipWriter;
 
+    static IPA_TEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
     fn make_test_ipa() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("beni_ipa_test_{}", std::process::id()));
+        let n = IPA_TEST_SEQ.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "beni_ipa_test_{}_{}_{}",
+            std::process::id(),
+            n,
+            std::thread::current().id().as_u64()
+        ));
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("test.ipa");
         let file = File::create(&path).unwrap();
