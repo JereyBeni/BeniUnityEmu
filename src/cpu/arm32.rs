@@ -18,7 +18,7 @@ impl Arm32Cpu {
 impl CpuBackend for Arm32Cpu {
     fn reset(&mut self) {
         self.regs = [0; 16];
-        self.cpsr = 0x10; // user mode
+        self.cpsr = 0x10;
     }
 
     fn step(&mut self, _mem: &mut MemoryManager) -> Result<(), String> {
@@ -47,21 +47,15 @@ impl CpuBackend for Arm32Cpu {
         self.regs[15] = pc as u32;
     }
 
-    fn read_memory(
-        &self,
-        mem: &MemoryManager,
-        addr: u64,
-        size: usize,
-    ) -> Result<Vec<u8>, String> {
-        mem.read(addr, size)
+    fn read_memory(&self, mem: &MemoryManager, addr: u64, size: usize) -> Result<Vec<u8>, String> {
+        let mut out = Vec::with_capacity(size);
+        for i in 0..size {
+            out.push(mem.read8(addr + i as u64)?);
+        }
+        Ok(out)
     }
 
-    fn write_memory(
-        &self,
-        mem: &mut MemoryManager,
-        addr: u64,
-        data: &[u8],
-    ) -> Result<(), String> {
-        mem.write(addr, data)
+    fn write_memory(&self, mem: &mut MemoryManager, addr: u64, data: &[u8]) -> Result<(), String> {
+        mem.write_bytes(addr, data)
     }
 }
