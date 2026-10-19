@@ -111,12 +111,19 @@ jobs:
           cd "$PKG"
           7z a -tzip "../BeniUnityEmu-windows-x64.zip" .
           cd ..
-          # Sanity: refuse if the zip somehow contains another .zip
-          if 7z l BeniUnityEmu-windows-x64.zip 2>/dev/null | grep -qiE '\.zip$'; then
-            echo "ERROR: nested zip detected inside package — forbidden" >&2
+
+          # Sanity: fail only if an ENTRY inside the archive ends with .zip
+          # (do not match the archive filename itself from "Listing archive: ...")
+          NESTED=$(7z l -slt BeniUnityEmu-windows-x64.zip 2>/dev/null \
+            | sed -n 's/^Path = //p' \
+            | grep -viE '^BeniUnityEmu-windows-x64\.zip$' \
+            | grep -iE '\.zip$' || true)
+          if [ -n "$NESTED" ]; then
+            echo "ERROR: nested zip detected inside package — forbidden:" >&2
+            echo "$NESTED" >&2
             exit 1
           fi
-          echo "Package OK:"
+          echo "Package OK (flat zip, native libs included):"
           7z l BeniUnityEmu-windows-x64.zip | head -60
 
       - uses: actions/upload-artifact@v4
@@ -188,12 +195,16 @@ jobs:
           rm -f BeniUnityEmu-linux-x64.zip
           (cd "$PKG" && zip -r ../BeniUnityEmu-linux-x64.zip .)
 
-          # Sanity: no nested zip inside the archive
-          if unzip -l BeniUnityEmu-linux-x64.zip | grep -qiE '\\.zip$'; then
-            echo "ERROR: nested zip detected inside package — forbidden" >&2
+          # Sanity: only entries inside the archive (column 4+ of unzip -l)
+          NESTED=$(unzip -l BeniUnityEmu-linux-x64.zip \
+            | awk 'NR>3 && $0 !~ /^---------/ && $0 !~ /files$/ {print $NF}' \
+            | grep -iE '\.zip$' || true)
+          if [ -n "$NESTED" ]; then
+            echo "ERROR: nested zip detected inside package — forbidden:" >&2
+            echo "$NESTED" >&2
             exit 1
           fi
-          echo "Package OK:"
+          echo "Package OK (flat zip, native libs included):"
           unzip -l BeniUnityEmu-linux-x64.zip | head -60
 
       - uses: actions/upload-artifact@v4
