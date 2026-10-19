@@ -4,7 +4,7 @@ use std::path::Path;
 
 use super::loader::ApkLoader;
 
-pub fn extract_required(loader: &ApkLoader, dest_root: &Path) -> Result<usize, String> {
+pub fn extract_required(loader: &mut ApkLoader, dest_root: &Path) -> Result<usize, String> {
     let mut total = 0;
 
     let lib_dest = dest_root.join("lib");

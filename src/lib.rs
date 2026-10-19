@@ -178,7 +178,7 @@ pub fn find_app(name: &str) -> Option<AppInfo> {
 pub fn enrich_app_info(info: &mut AppInfo) {
     match info.format {
         AppFormat::Apk => match ApkLoader::open(&info.path) {
-            Ok(loader) => {
+            Ok(mut loader) => {
                 let summary = loader.summarize();
                 info.has_libunity = summary.has_libunity;
                 info.has_libmain = summary.has_libmain;
@@ -189,7 +189,7 @@ pub fn enrich_app_info(info: &mut AppInfo) {
             Err(e) => eprintln!("[ERROR] Failed to open APK: {}", e),
         },
         AppFormat::Ipa => match IpaLoader::open(&info.path) {
-            Ok(loader) => {
+            Ok(mut loader) => {
                 let summary = loader.summarize();
                 info.native_libs = summary.native_libs;
                 info.architecture = summary.preferred_arch;
@@ -213,16 +213,16 @@ pub fn extract_app(app: &AppInfo) -> Result<String, String> {
 
     match app.format {
         AppFormat::Apk => {
-            let loader = ApkLoader::open(&app.path)?;
-            let meta = cache_mgr.extract_apk(app_name, &loader)?;
+            let mut loader = ApkLoader::open(&app.path)?;
+            let meta = cache_mgr.extract_apk(app_name, &mut loader)?;
             Ok(format!(
                 "[CACHE] Extracted {} (arch={:?}, libunity={})",
                 meta.name, meta.architecture, meta.has_libunity
             ))
         }
         AppFormat::Ipa => {
-            let loader = IpaLoader::open(&app.path)?;
-            let _meta = cache_mgr.extract_ipa(app_name, &loader)?;
+            let mut loader = IpaLoader::open(&app.path)?;
+            let _meta = cache_mgr.extract_ipa(app_name, &mut loader)?;
             Ok(format!("[CACHE] IPA cache created for {}", app_name))
         }
         AppFormat::Unknown => Err("Unknown format".into()),
@@ -233,7 +233,7 @@ pub fn inspect_app(app: &AppInfo) -> String {
     let mut out = String::new();
     match app.format {
         AppFormat::Apk => match ApkLoader::open(&app.path) {
-            Ok(loader) => {
+            Ok(mut loader) => {
                 let summary = loader.summarize();
                 out.push_str(&format!("[APK] {}\n", app.name));
                 out.push_str(&format!("  Files: {}\n", summary.file_count));
@@ -253,7 +253,7 @@ pub fn inspect_app(app: &AppInfo) -> String {
             Err(e) => out.push_str(&format!("[ERROR] {}\n", e)),
         },
         AppFormat::Ipa => match IpaLoader::open(&app.path) {
-            Ok(loader) => {
+            Ok(mut loader) => {
                 let summary = loader.summarize();
                 out.push_str(&format!("[IPA] {}\n", app.name));
                 out.push_str(&format!("  Files: {}\n", summary.file_count));

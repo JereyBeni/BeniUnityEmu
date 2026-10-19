@@ -11,32 +11,86 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Fast gate: library only (no GUI). Fails the pipeline early if code is broken.
+  # ---------------------------------------------------------------------------
+  check:
+    name: Check + Test (lib)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo check (lib, no default features)
+        run: cargo check --lib --no-default-features
+
+      - name: cargo test (lib, no default features)
+        run: cargo test --lib --no-default-features
+
+      - name: cargo fmt --check (if rustfmt available)
+        run: cargo fmt --check
+        continue-on-error: true
+
+  # ---------------------------------------------------------------------------
+  # Windows release build + flat package zip (includes .so / .dylib when present)
+  # ---------------------------------------------------------------------------
   build-windows:
     name: Build Windows (x86_64)
+    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Build release (CLI + App Picker)
         run: cargo build --release --bins
         shell: bash
-      - name: Package
+
+      - name: Package (flat zip — no nested zips)
         shell: bash
         run: |
-          mkdir -p package/BeniApps package/BeniFonts package/BeniSO package/BeniDyLIB package/cache
-          mkdir -p package/BeniAPK_Apps package/BeniIOS_Apps
-          cp target/release/BeniUnityEmu.exe package/ 2>/dev/null || true
-          cp target/release/BeniAppPicker.exe package/ 2>/dev/null || true
-          if [ ! -f package/BeniUnityEmu.exe ] && [ -f target/release/BeniUnityEmu ]; then
-            cp target/release/BeniUnityEmu package/BeniUnityEmu.exe
+          set -e
+          PKG=package
+          rm -rf "$PKG"
+          mkdir -p "$PKG"/BeniApps "$PKG"/BeniAPK_Apps "$PKG"/BeniIOS_Apps
+          mkdir -p "$PKG"/BeniFonts "$PKG"/BeniSO "$PKG"/BeniDyLIB "$PKG"/cache
+
+          # Binaries
+          if [ -f target/release/BeniUnityEmu.exe ]; then
+            cp target/release/BeniUnityEmu.exe "$PKG"/
+          elif [ -f target/release/BeniUnityEmu ]; then
+            cp target/release/BeniUnityEmu "$PKG"/BeniUnityEmu.exe
+          else
+            echo "ERROR: BeniUnityEmu binary not found" >&2
+            exit 1
           fi
-          if [ ! -f package/BeniAppPicker.exe ] && [ -f target/release/BeniAppPicker ]; then
-            cp target/release/BeniAppPicker package/BeniAppPicker.exe
+          if [ -f target/release/BeniAppPicker.exe ]; then
+            cp target/release/BeniAppPicker.exe "$PKG"/
+          elif [ -f target/release/BeniAppPicker ]; then
+            cp target/release/BeniAppPicker "$PKG"/BeniAppPicker.exe
           fi
-          cat > package/LEEME.txt << 'TXT'
+
+          # Native libraries (required — do not ship empty folders only)
+          if [ -d BeniSO ]; then
+            find BeniSO -maxdepth 1 -type f \( -name '*.so' -o -name '*.so.*' -o -name '.gitkeep' \) -exec cp -v {} "$PKG"/BeniSO/ \;
+          fi
+          if [ -d BeniDyLIB ]; then
+            find BeniDyLIB -maxdepth 1 -type f \( -name '*.dylib' -o -name '.gitkeep' -o -name 'COPYING*' \) -exec cp -v {} "$PKG"/BeniDyLIB/ \;
+          fi
+
+          # Docs
+          if [ -f README.md ]; then cp README.md "$PKG"/; fi
+          cat > "$PKG"/LEEME.txt << 'TXT'
           BeniUnityEmu + Beni App Picker
           Made by Beni
 
@@ -46,36 +100,113 @@ jobs:
           1. Put APK/IPA files in BeniApps/
           2. Run BeniAppPicker.exe
           3. Select an app → Launch / Inspect / Extract
+
+          Native libs:
+            BeniSO/     – Android .so (libunity, libmain, libmono, ...)
+            BeniDyLIB/  – iOS .dylib support libraries
           TXT
-          if [ -f README.md ]; then cp README.md package/; fi
-          cd package
-          7z a -tzip "../BeniUnityEmu-windows-x64.zip" *
+
+          # Flat zip only: contents of package/ at zip root. Never nest a zip.
+          rm -f BeniUnityEmu-windows-x64.zip
+          cd "$PKG"
+          7z a -tzip "../BeniUnityEmu-windows-x64.zip" .
+          cd ..
+
+          # Sanity: fail only if an ENTRY inside the archive ends with .zip
+          # (do not match the archive filename itself from "Listing archive: ...")
+          NESTED=$(7z l -slt BeniUnityEmu-windows-x64.zip 2>/dev/null \
+            | sed -n 's/^Path = //p' \
+            | grep -viE '^BeniUnityEmu-windows-x64\.zip$' \
+            | grep -iE '\.zip$' || true)
+          if [ -n "$NESTED" ]; then
+            echo "ERROR: nested zip detected inside package — forbidden:" >&2
+            echo "$NESTED" >&2
+            exit 1
+          fi
+          echo "Package OK (flat zip, native libs included):"
+          7z l BeniUnityEmu-windows-x64.zip | head -60
+
       - uses: actions/upload-artifact@v4
         with:
           name: BeniUnityEmu-windows-x64
           path: BeniUnityEmu-windows-x64.zip
           retention-days: 30
 
+  # ---------------------------------------------------------------------------
+  # Linux release build + flat package zip
+  # ---------------------------------------------------------------------------
   build-linux:
     name: Build Linux (x86_64)
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Install GUI deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
-      - run: cargo build --release --bins
-      - name: Package
+          sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+
+      - name: Build release (CLI + App Picker)
+        run: cargo build --release --bins
+
+      - name: Package (flat zip — no nested zips)
         run: |
-          mkdir -p package/BeniApps package/BeniFonts package/BeniSO package/BeniDyLIB package/cache
-          cp target/release/BeniUnityEmu package/
-          cp target/release/BeniAppPicker package/
-          chmod +x package/BeniUnityEmu package/BeniAppPicker
-          echo 'BeniUnityEmu + Beni App Picker' > package/LEEME.txt
-          cd package && zip -r ../BeniUnityEmu-linux-x64.zip .
+          set -e
+          PKG=package
+          rm -rf "$PKG"
+          mkdir -p "$PKG"/BeniApps "$PKG"/BeniAPK_Apps "$PKG"/BeniIOS_Apps
+          mkdir -p "$PKG"/BeniFonts "$PKG"/BeniSO "$PKG"/BeniDyLIB "$PKG"/cache
+
+          cp target/release/BeniUnityEmu "$PKG"/
+          cp target/release/BeniAppPicker "$PKG"/
+          chmod +x "$PKG"/BeniUnityEmu "$PKG"/BeniAppPicker
+
+          # Native libraries (required)
+          if [ -d BeniSO ]; then
+            find BeniSO -maxdepth 1 -type f \( -name '*.so' -o -name '*.so.*' -o -name '.gitkeep' \) -exec cp -v {} "$PKG"/BeniSO/ \;
+          fi
+          if [ -d BeniDyLIB ]; then
+            find BeniDyLIB -maxdepth 1 -type f \( -name '*.dylib' -o -name '.gitkeep' -o -name 'COPYING*' \) -exec cp -v {} "$PKG"/BeniDyLIB/ \;
+          fi
+
+          if [ -f README.md ]; then cp README.md "$PKG"/; fi
+          cat > "$PKG"/LEEME.txt << 'TXT'
+          BeniUnityEmu + Beni App Picker
+          Made by Beni
+
+          ./BeniAppPicker   – GUI launcher
+          ./BeniUnityEmu    – CLI runtime
+
+          1. Put APK/IPA files in BeniApps/
+          2. Run ./BeniAppPicker
+          3. Select an app → Launch / Inspect / Extract
+
+          Native libs:
+            BeniSO/     – Android .so
+            BeniDyLIB/  – iOS .dylib
+          TXT
+
+          rm -f BeniUnityEmu-linux-x64.zip
+          (cd "$PKG" && zip -r ../BeniUnityEmu-linux-x64.zip .)
+
+          # Sanity: only entries inside the archive (column 4+ of unzip -l)
+          NESTED=$(unzip -l BeniUnityEmu-linux-x64.zip \
+            | awk 'NR>3 && $0 !~ /^---------/ && $0 !~ /files$/ {print $NF}' \
+            | grep -iE '\.zip$' || true)
+          if [ -n "$NESTED" ]; then
+            echo "ERROR: nested zip detected inside package — forbidden:" >&2
+            echo "$NESTED" >&2
+            exit 1
+          fi
+          echo "Package OK (flat zip, native libs included):"
+          unzip -l BeniUnityEmu-linux-x64.zip | head -60
+
       - uses: actions/upload-artifact@v4
         with:
           name: BeniUnityEmu-linux-x64

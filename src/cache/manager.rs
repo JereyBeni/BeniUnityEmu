@@ -75,7 +75,7 @@ impl CacheManager {
         meta.exists() && extracted.exists()
     }
 
-    pub fn extract_apk(&self, app_name: &str, loader: &ApkLoader) -> Result<CacheMetadata, String> {
+    pub fn extract_apk(&self, app_name: &str, loader: &mut ApkLoader) -> Result<CacheMetadata, String> {
         let app_dir = self.app_dir(app_name);
         let extracted = app_dir.join("extracted");
         fs::create_dir_all(&extracted).map_err(|e| format!("Cannot create cache dir: {}", e))?;
@@ -102,7 +102,7 @@ impl CacheManager {
         Ok(meta)
     }
 
-    pub fn extract_ipa(&self, app_name: &str, loader: &IpaLoader) -> Result<CacheMetadata, String> {
+    pub fn extract_ipa(&self, app_name: &str, loader: &mut IpaLoader) -> Result<CacheMetadata, String> {
         let app_dir = self.app_dir(app_name);
         let extracted = app_dir.join("extracted");
         fs::create_dir_all(&extracted).map_err(|e| format!("Cannot create cache dir: {}", e))?;
