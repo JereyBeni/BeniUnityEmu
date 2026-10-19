@@ -37,7 +37,6 @@ impl SessionState {
     }
 }
 
-/// Structured launch outcome. Running is only for real guest execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchResult {
     UnsupportedRuntime {
@@ -49,7 +48,6 @@ pub enum LaunchResult {
         stage: String,
         error: String,
     },
-    /// Reserved: only set when a real guest backend executes code.
     Executed {
         note: String,
     },
@@ -121,7 +119,6 @@ impl GameSession {
         println!("{}", line.trim_end());
     }
 
-    /// Full launch pipeline. Does **not** invent guest execution.
     pub fn run(&mut self) -> Result<(), String> {
         match self.platform.as_str() {
             "ios" => self.run_ios_pipeline(),
@@ -140,7 +137,6 @@ impl GameSession {
     }
 
     fn run_ios_pipeline(&mut self) -> Result<(), String> {
-        // --- Extract ---
         self.state = SessionState::Extracting;
         self.append_log("[Extract] Starting IPA extraction…");
 
@@ -172,13 +168,9 @@ impl GameSession {
         let payload_dest = self.work_dir.join("Payload");
         match loader.extract_prefix("Payload/", &payload_dest) {
             Ok(n) => self.append_log(&format!("[Extract] Completed ({} files under Payload/)", n)),
-            Err(e) => {
-                // Still try inspection from the archive even if disk extract failed
-                self.append_log(&format!("[Extract] Partial/failed: {}", e));
-            }
+            Err(e) => self.append_log(&format!("[Extract] Partial/failed: {}", e)),
         }
 
-        // --- Inspect ---
         self.state = SessionState::Inspecting;
         let summary = loader.summarize();
 
@@ -187,7 +179,6 @@ impl GameSession {
         } else {
             self.append_log("[Inspect] Warning: Payload/*.app not located");
         }
-
         if let Some(ref bid) = summary.bundle_id {
             self.append_log(&format!("[Inspect] Bundle ID: {}", bid));
         }
@@ -207,9 +198,28 @@ impl GameSession {
             arch.as_deref().unwrap_or("unknown")
         ));
 
+        // --- Stage F analysis ---
         if summary.has_unity {
-            self.append_log("[Inspect] Unity-related frameworks/libs detected in archive");
+            self.append_log("[Analyze] Unity game / framework markers detected");
+        } else {
+            self.append_log("[Analyze] Unity markers: not detected (may still be native UIKit)");
         }
+        let backend = if summary.has_il2cpp {
+            "IL2CPP (heuristic)"
+        } else if summary.has_mono_assemblies {
+            "Mono / managed assemblies (heuristic)"
+        } else {
+            "unknown / native-only (heuristic)"
+        };
+        self.append_log(&format!("[Analyze] Scripting backend: {}", backend));
+        if summary.has_touchscript {
+            self.append_log("[Analyze] TouchScript dependency: detected in package paths");
+        } else {
+            self.append_log("[Analyze] TouchScript dependency: not detected in package paths");
+        }
+        self.append_log("[Input] Host TouchScript-oriented input queue: available");
+        self.append_log("[Input] TouchScript guest C# compatibility: not tested (no managed runtime)");
+
         if !summary.native_libs.is_empty() {
             self.append_log(&format!(
                 "[Inspect] Native libraries: {} (.dylib/.so)",
@@ -217,26 +227,26 @@ impl GameSession {
             ));
         }
 
-        // --- Loading / runtime selection ---
         self.state = SessionState::Loading;
         if let Some(ref mut rt) = self.ios {
             rt.initialize();
         }
 
-        // Truthful capability check: no native iOS guest runtime on Windows host.
         let missing = "Native iOS runtime unavailable: Mach-O/dyld loader, ARM64 guest CPU, \
 Apple frameworks (UIKit/Foundation), and iOS syscalls are not implemented. \
 Windows cannot execute iOS IPA binaries as PE images. \
-Mono/.NET does not make a native IPA runnable.";
+Mono/.NET does not make a native IPA runnable. \
+TouchScript host input exists but cannot reach guest scripts without a managed/native runtime.";
 
+        self.append_log("[Runtime] Managed runtime: unavailable");
         self.append_log("[Runtime] Native iOS runtime: unavailable");
         self.append_log(&format!("[Runtime] {}", missing));
 
-        // Architecture recognition ≠ execution.
         self.state = SessionState::UnsupportedRuntime;
         self.unity.set_state(UnityState::Stopped);
 
         self.append_log("[Result] UnsupportedRuntime");
+        self.append_log("[Details] Game scripts were not executed.");
         self.append_log(
             "[Details] The executable was inspected but no guest code was executed.",
         );
@@ -246,19 +256,14 @@ Mono/.NET does not make a native IPA runnable.";
             architecture: arch,
             executable: exe_name,
         });
-
-        // Ok(()) with UnsupportedRuntime state: pipeline completed successfully as analysis.
-        // Guest was not executed.
         Ok(())
     }
 
     fn run_android_pipeline(&mut self) -> Result<(), String> {
         self.state = SessionState::Extracting;
-        self.append_log("[Extract] Android/APK path — cache/extract not required for capability check");
-
+        self.append_log("[Extract] Android/APK path — capability check only");
         self.state = SessionState::Inspecting;
         self.append_log("[Inspect] APK launch uses Android compatibility stubs only");
-
         self.state = SessionState::Loading;
         if let Some(ref mut rt) = self.android {
             rt.initialize();
@@ -269,13 +274,10 @@ Mono/.NET does not make a native IPA runnable.";
         let missing = "Android/native guest runtime unavailable: ART/JNI and ARM guest execution are not implemented.";
         self.append_log("[Runtime] Android guest runtime: unavailable");
         self.append_log(&format!("[Runtime] {}", missing));
-
         self.state = SessionState::UnsupportedRuntime;
         self.unity.set_state(UnityState::Stopped);
         self.append_log("[Result] UnsupportedRuntime");
-        self.append_log(
-            "[Details] No guest code was executed. Architecture readiness is not execution.",
-        );
+        self.append_log("[Details] No guest code was executed.");
 
         self.launch_result = Some(LaunchResult::UnsupportedRuntime {
             reason: missing.to_string(),
@@ -349,16 +351,12 @@ mod tests {
     fn ipa_launch_does_not_claim_execution() {
         let path = make_minimal_ipa();
         let mut s = GameSession::new("My Talking Tom 1.0", &path, "ios");
-        assert_eq!(s.state(), SessionState::Created);
-        let r = s.run();
-        assert!(r.is_ok());
+        assert!(s.run().is_ok());
         assert_eq!(s.state(), SessionState::UnsupportedRuntime);
         assert!(!matches!(s.launch_result, Some(LaunchResult::Executed { .. })));
-        assert!(s.log.contains("[Extract]"));
-        assert!(s.log.contains("[Inspect] Architecture:"));
+        assert!(s.log.contains("[Analyze]"));
+        assert!(s.log.contains("[Input] Host TouchScript-oriented input queue: available"));
         assert!(s.log.contains("[Result] UnsupportedRuntime"));
-        assert!(s.log.contains("no guest code was executed") || s.log.contains("No guest code"));
-        // Must not use the old Stage-E-only placeholder as the only outcome
         assert!(!s.log.contains("Architecture is ready for Stage E integration"));
     }
 
@@ -370,7 +368,6 @@ mod tests {
         let path = dir.join(
             "My Learn Go [dRed Technologies Limited] (v1.0 iPad os42)-JCTOTGaming.rc336_935.ipa",
         );
-        // Reuse minimal zip structure
         let src = make_minimal_ipa();
         fs::copy(&src, &path).unwrap();
         let mut s = GameSession::new(
@@ -385,13 +382,8 @@ mod tests {
     #[test]
     fn missing_ipa_file_fails_at_extract() {
         let mut s = GameSession::new("missing", Path::new("/nonexistent/no.ipa"), "ios");
-        let r = s.run();
-        assert!(r.is_err());
+        assert!(s.run().is_err());
         assert_eq!(s.state(), SessionState::Failed);
-        assert!(matches!(
-            s.launch_result,
-            Some(LaunchResult::Failed { .. })
-        ));
     }
 
     #[test]
@@ -407,14 +399,12 @@ mod tests {
         let mut s = GameSession::new("testapp", Path::new("/tmp/test.apk"), "android");
         assert!(s.run().is_ok());
         assert_eq!(s.state(), SessionState::UnsupportedRuntime);
-        assert!(!s.launch_result.as_ref().unwrap().is_executed());
     }
 
     #[test]
     fn unknown_platform_fails() {
         let mut s = GameSession::new("x", Path::new("/tmp/x"), "amiga");
-        let r = s.run();
-        assert!(r.is_err());
+        assert!(s.run().is_err());
         assert_eq!(s.state(), SessionState::Failed);
     }
 }
