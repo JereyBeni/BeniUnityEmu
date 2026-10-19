@@ -2,10 +2,12 @@
 
 use std::env;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process;
 
 use beni_unity_emu::{
     ensure_directories, enrich_app_info, extract_app, find_app, inspect_app, run_app, scan_apps,
+    unity::{inspect_pangoland_target, ENV_TARGET},
     AppInfo,
 };
 
@@ -15,6 +17,7 @@ enum Command {
     Inspect(String),
     Extract(String),
     Run(String),
+    PangolandInspect(Option<PathBuf>),
     Interactive,
 }
 
@@ -46,6 +49,10 @@ fn parse_args() -> Command {
             }
             Command::Run(args[2].clone())
         }
+        "pangoland-inspect" | "--pangoland-inspect" => {
+            let path = args.get(2).map(PathBuf::from);
+            Command::PangolandInspect(path)
+        }
         "--help" | "-h" | "help" => {
             println!("BeniUnityEmu - Unity Emulation Runtime by Beni");
             println!();
@@ -55,6 +62,9 @@ fn parse_args() -> Command {
             println!("  BeniUnityEmu --inspect <app>  Inspect APK/IPA");
             println!("  BeniUnityEmu --extract <app>  Extract to cache");
             println!("  BeniUnityEmu --run <app>      Attempt to run");
+            println!("  BeniUnityEmu pangoland-inspect [dir]");
+            println!("      Stage G: inspect Pangoland Unity 4.6.1 package");
+            println!("      Default dir: ${} or BeniApps/PangoLand/", ENV_TARGET);
             println!();
             println!("GUI launcher: BeniAppPicker.exe");
             process::exit(0);
@@ -108,7 +118,7 @@ fn main() {
             if let Some(mut app) = find_app(&name) {
                 enrich_app_info(&mut app);
                 match run_app(&app) {
-                    Ok(msg) => println!("[GAME] {}", msg),
+                    Ok(msg) => println!("{}", msg),
                     Err(e) => {
                         eprintln!("[ERROR] {}", e);
                         process::exit(1);
@@ -117,6 +127,13 @@ fn main() {
             } else {
                 eprintln!("[ERROR] Application not found: {}", name);
                 process::exit(1);
+            }
+        }
+        Command::PangolandInspect(path) => {
+            let report = inspect_pangoland_target(path.as_deref());
+            print!("{}", report.to_text());
+            if !report.found {
+                process::exit(2);
             }
         }
         Command::Interactive => interactive_menu(),
@@ -237,7 +254,7 @@ fn app_submenu(app: &AppInfo) {
                 Err(e) => eprintln!("[ERROR] {}", e),
             },
             "3" => match run_app(&info) {
-                Ok(m) => println!("[GAME] {}", m),
+                Ok(m) => println!("{}", m),
                 Err(e) => eprintln!("[ERROR] {}", e),
             },
             "4" | "b" | "B" => break,
