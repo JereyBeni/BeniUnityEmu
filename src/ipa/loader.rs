@@ -181,10 +181,9 @@ mod tests {
     fn make_test_ipa() -> PathBuf {
         let n = IPA_TEST_SEQ.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "beni_ipa_test_{}_{}_{}",
+            "beni_ipa_test_{}_{}",
             std::process::id(),
-            n,
-            std::thread::current().id().as_u64()
+            n
         ));
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("test.ipa");
