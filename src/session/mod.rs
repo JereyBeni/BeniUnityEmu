@@ -120,7 +120,8 @@ impl GameSession {
     }
 
     pub fn run(&mut self) -> Result<(), String> {
-        match self.platform.as_str() {
+        let platform = self.platform.clone();
+        match platform.as_str() {
             "ios" => self.run_ios_pipeline(),
             "android" => self.run_android_pipeline(),
             other => {
@@ -198,7 +199,6 @@ impl GameSession {
             arch.as_deref().unwrap_or("unknown")
         ));
 
-        // --- Stage F analysis ---
         if summary.has_unity {
             self.append_log("[Analyze] Unity game / framework markers detected");
         } else {
