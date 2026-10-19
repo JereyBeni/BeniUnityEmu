@@ -24,11 +24,14 @@ use apk::loader::ApkLoader;
 use cache::manager::CacheManager;
 use ipa::loader::IpaLoader;
 use session::GameSession;
+use unity::pangoland::inspect_pangoland_target;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppFormat {
     Apk,
     Ipa,
+    /// Extracted Unity / APPX / standalone game directory (e.g. Pango Zoo, Pangoland).
+    UnityFolder,
     Unknown,
 }
 
@@ -52,6 +55,7 @@ impl AppInfo {
         match self.format {
             AppFormat::Apk => "APK",
             AppFormat::Ipa => "IPA",
+            AppFormat::UnityFolder => "Unity",
             AppFormat::Unknown => "???",
         }
     }
@@ -80,8 +84,14 @@ impl AppInfo {
                     "Ready"
                 }
             }
-            // IPA is inspectable; native guest execution is not available yet.
             AppFormat::Ipa => "Inspectable",
+            AppFormat::UnityFolder => {
+                if self.has_libunity || self.has_mono {
+                    "Inspectable"
+                } else {
+                    "Folder"
+                }
+            }
             AppFormat::Unknown => "Error",
         }
     }
@@ -109,6 +119,76 @@ pub fn ensure_directories() {
     }
 }
 
+/// Heuristic: directory looks like an extracted Unity / APPX / UWP game package.
+fn looks_like_unity_folder(dir: &Path) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    let markers = [
+        "UnityPlayer.dll",
+        "AppxManifest.xml",
+        "globalgamemanagers",
+        "mainData",
+    ];
+    for m in markers {
+        if dir.join(m).exists() {
+            return true;
+        }
+    }
+    // Nested Managed / Data common layouts
+    if dir.join("Data").join("Managed").is_dir() {
+        return true;
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for ent in entries.flatten() {
+            let p = ent.path();
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if name.ends_with("_data") && p.is_dir() {
+                return true;
+            }
+            if name == "managed" && p.is_dir() {
+                return true;
+            }
+            if name == "unityplayer.dll" || name == "appxmanifest.xml" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn dir_size_approx(dir: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![dir.to_path_buf()];
+    let mut n = 0usize;
+    while let Some(d) = stack.pop() {
+        if n > 2000 {
+            break;
+        }
+        if let Ok(rd) = fs::read_dir(&d) {
+            for ent in rd.flatten() {
+                n += 1;
+                let p = ent.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if let Ok(m) = ent.metadata() {
+                    total = total.saturating_add(m.len());
+                }
+            }
+        }
+    }
+    total
+}
+
+fn display_name(raw: &str) -> String {
+    // Explorer sometimes shows URL-encoded folder names literally
+    raw.replace("%20", " ")
+}
+
 pub fn scan_apps() -> Vec<AppInfo> {
     let mut apps = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -127,6 +207,39 @@ pub fn scan_apps() -> Vec<AppInfo> {
         if let Ok(entries) = fs::read_dir(&dir_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
+
+                // Unity / APPX extracted folders
+                if path.is_dir() && forced.is_none() && looks_like_unity_folder(&path) {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let name = display_name(&name);
+                    if !seen.insert(name.clone()) {
+                        continue;
+                    }
+                    let size_bytes = dir_size_approx(&path);
+                    apps.push(AppInfo {
+                        name,
+                        path,
+                        format: AppFormat::UnityFolder,
+                        package: None,
+                        version: None,
+                        architecture: None,
+                        has_libunity: false,
+                        has_libmain: false,
+                        has_mono: false,
+                        native_libs: Vec::new(),
+                        size_bytes,
+                    });
+                    continue;
+                }
+
+                if !path.is_file() {
+                    continue;
+                }
+
                 let ext = path
                     .extension()
                     .and_then(|e| e.to_str())
@@ -135,7 +248,8 @@ pub fn scan_apps() -> Vec<AppInfo> {
                 let format = match (forced, ext.as_str()) {
                     (_, "apk") => AppFormat::Apk,
                     (_, "ipa") => AppFormat::Ipa,
-                    (Some(f), _) => *f,
+                    (_, "appx") | (_, "msix") | (_, "appxbundle") => AppFormat::UnityFolder,
+                    (Some(f), _) if path.is_file() => *f,
                     _ => continue,
                 };
                 let name = path
@@ -143,6 +257,7 @@ pub fn scan_apps() -> Vec<AppInfo> {
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown")
                     .to_string();
+                let name = display_name(&name);
                 if !seen.insert(name.clone()) {
                     continue;
                 }
@@ -199,6 +314,19 @@ pub fn enrich_app_info(info: &mut AppInfo) {
             }
             Err(e) => eprintln!("[ERROR] Failed to open IPA: {}", e),
         },
+        AppFormat::UnityFolder => {
+            let report = inspect_pangoland_target(Some(&info.path));
+            info.has_libunity = report.has_unity_player;
+            info.has_mono = report.has_assembly_csharp || report.has_managed;
+            info.architecture = report.architecture_hint;
+            info.version = report.unity_version_hint;
+            if report.has_touchscript {
+                info.native_libs.push("TouchScript.dll".into());
+            }
+            if report.has_unity_player {
+                info.native_libs.push("UnityPlayer.dll".into());
+            }
+        }
         AppFormat::Unknown => {}
     }
 }
@@ -227,6 +355,16 @@ pub fn extract_app(app: &AppInfo) -> Result<String, String> {
             let loader = IpaLoader::open(&app.path)?;
             let _meta = cache_mgr.extract_ipa(app_name, &loader)?;
             Ok(format!("[CACHE] IPA cache created for {}", app_name))
+        }
+        AppFormat::UnityFolder => {
+            if app.path.is_dir() {
+                Ok(format!(
+                    "[CACHE] Unity/APPX folder already extracted on disk: {}",
+                    app.path.display()
+                ))
+            } else {
+                Err("Unity package file extract not implemented — extract AppxBundle manually first".into())
+            }
         }
         AppFormat::Unknown => Err("Unknown format".into()),
     }
@@ -277,39 +415,58 @@ pub fn inspect_app(app: &AppInfo) -> String {
             }
             Err(e) => out.push_str(&format!("[ERROR] {}\n", e)),
         },
+        AppFormat::UnityFolder => {
+            out.push_str(&format!("[Unity folder] {}\n", app.name));
+            out.push_str(&format!("  Path: {}\n", app.path.display()));
+            let report = inspect_pangoland_target(Some(&app.path));
+            out.push_str(&report.to_text());
+        }
         AppFormat::Unknown => out.push_str("[ERROR] Unknown format\n"),
     }
     out
 }
 
-/// Launch pipeline entry point used by App Picker / CLI.
-/// Returns the full stage log. Does not claim guest execution on UnsupportedRuntime.
 pub fn run_app(app: &AppInfo) -> Result<String, String> {
     let app_name = app
         .name
         .trim_end_matches(".apk")
         .trim_end_matches(".ipa");
-    let platform = match app.format {
-        AppFormat::Apk => "android",
-        AppFormat::Ipa => "ios",
+
+    match app.format {
+        AppFormat::UnityFolder => {
+            let report = inspect_pangoland_target(Some(&app.path));
+            let mut log = format!("[Launch] {}\n", app.name);
+            log.push_str("[Analyze] Unity/APPX folder target\n");
+            log.push_str(&format!(
+                "[Analyze] UnityPlayer: {} | Assembly-CSharp: {} | TouchScript: {}\n",
+                report.has_unity_player, report.has_assembly_csharp, report.has_touchscript
+            ));
+            log.push_str("[Runtime] Unity guest execution for Windows APPX/folder: not implemented yet\n");
+            log.push_str("[Result] UnsupportedRuntime\n");
+            log.push_str("[Details] Package was inspected; no guest code was executed.\n");
+            Ok(log)
+        }
         AppFormat::Unknown => return Err("Unknown format".into()),
-    };
-
-    // Best-effort cache extract (non-fatal for launch diagnostics)
-    let cache_mgr = CacheManager::new("cache");
-    if !cache_mgr.has_valid_cache(app_name) {
-        let _ = extract_app(app);
-    }
-
-    let mut session = GameSession::new(app_name, &app.path, platform);
-    match session.run() {
-        Ok(()) => Ok(session.log),
-        Err(e) => {
-            // Still return accumulated log so the UI shows Extract/Inspect stages
-            if session.log.is_empty() {
-                Err(e)
-            } else {
-                Ok(format!("{}\n{}", session.log.trim_end(), e))
+        AppFormat::Apk | AppFormat::Ipa => {
+            let platform = match app.format {
+                AppFormat::Apk => "android",
+                AppFormat::Ipa => "ios",
+                _ => unreachable!(),
+            };
+            let cache_mgr = CacheManager::new("cache");
+            if !cache_mgr.has_valid_cache(app_name) {
+                let _ = extract_app(app);
+            }
+            let mut session = GameSession::new(app_name, &app.path, platform);
+            match session.run() {
+                Ok(()) => Ok(session.log),
+                Err(e) => {
+                    if session.log.is_empty() {
+                        Err(e)
+                    } else {
+                        Ok(format!("{}\n{}", session.log.trim_end(), e))
+                    }
+                }
             }
         }
     }

@@ -45,7 +45,7 @@ impl AppPickerState {
         ));
         if self.apps.is_empty() {
             self.status_log.push_str(
-                "Place .apk / .ipa files in the BeniApps/ folder next to this executable.\n",
+                "Place .apk / .ipa files, or extracted Unity/APPX folders (with UnityPlayer.dll / Data/Managed) in BeniApps/.\n",
             );
         }
     }
@@ -62,7 +62,8 @@ impl AppPickerState {
         self.status_log
             .push_str(&format!("[Launch] Starting {}\u{2026}\n", app.name));
         match run_app(&app) {
-            Ok(msg) => self.status_log.push_str(&format!("[Launch] {}\n", msg)),
+            Ok(msg) => self.status_log.push_str(&format!("{}
+", msg)),
             Err(e) => self.status_log.push_str(&format!("[Launch] Error: {}\n", e)),
         }
     }
